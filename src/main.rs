@@ -1,0 +1,426 @@
+use std::collections::HashMap;
+use std::env;
+use std::fs::File;
+use std::io::Read;
+use std::process;
+
+#[derive(Debug, PartialEq)]
+enum AST {
+    Arrow(Box<AST>, Box<AST>),
+    Match(Box<AST>, Box<AST>),
+    Method(Vec<AST>, Box<AST>),
+    Primitive(String),
+    Literal(String),
+}
+
+struct Parser {
+    tokenizer: kohaku::Tokenizer,
+}
+
+impl Parser {
+    fn new() -> Self {
+        let tokenizer = kohaku::Tokenizer::new([
+            "->", "<-", "(", ")", "{", "=", ",", "}", "[", "|", "]", "<", ">", ".",
+        ]);
+        Parser {
+            tokenizer: tokenizer,
+        }
+    }
+
+    fn parse(&mut self, input: &str) -> Result<AST, ()> {
+        let mut iter = self.tokenizer.tokenize(input).map(Result::unwrap);
+        let obj = Self::take_object(&mut iter)?;
+        if iter.next().is_some() {
+            return Err(());
+        }
+        Ok(obj)
+    }
+
+    fn take_chain<'a, I: Iterator<Item = &'a str>>(iter: &mut I) -> Result<AST, ()> {
+        let obj = Self::take_object(iter)?;
+        match iter.next() {
+            Some("->") => Ok(AST::Arrow(Box::new(obj), Box::new(Self::take_chain(iter)?))),
+            Some("<-") => Ok(AST::Arrow(Box::new(Self::take_chain(iter)?), Box::new(obj))),
+            Some(")") => Ok(obj),
+            _ => Err(()),
+        }
+    }
+
+    fn take_match<'a, I: Iterator<Item = &'a str>>(iter: &mut I) -> Result<AST, ()> {
+        let obj = Self::take_object(iter)?;
+        match iter.next() {
+            Some("|") => {
+                let obj2 = Self::take_object(iter)?;
+                match iter.next() {
+                    Some("]") => Ok(AST::Match(Box::new(obj), Box::new(obj2))),
+                    _ => Err(()),
+                }
+            }
+            _ => Err(()),
+        }
+    }
+
+    fn take_method<'a, I: Iterator<Item = &'a str>>(iter: &mut I) -> Result<AST, ()> {
+        let mut args = vec![Self::take_object(iter)?];
+        loop {
+            match iter.next() {
+                Some(",") => args.push(Self::take_object(iter)?),
+                Some(">") => break,
+                _ => return Err(()),
+            }
+        }
+        match iter.next() {
+            Some(".") => Ok(AST::Method(args, Box::new(Self::take_object(iter)?))),
+            _ => Err(()),
+        }
+    }
+
+    fn take_object<'a, I: Iterator<Item = &'a str>>(iter: &mut I) -> Result<AST, ()> {
+        match iter.next() {
+            Some("(") => Self::take_chain(iter),
+            Some("[") => Self::take_match(iter),
+            Some("<") => Self::take_method(iter),
+            Some(label) => match label.starts_with(r#"""#) {
+                true => Ok(AST::Literal(label.trim_matches('"').to_string())),
+                false => Ok(AST::Primitive(label.to_string())),
+            },
+            _ => Err(()),
+        }
+    }
+}
+
+struct Interpreter {
+    storage: HashMap<String, DataInterpreter>,
+}
+
+impl Interpreter {
+    fn new(storage: HashMap<String, DataInterpreter>) -> Self {
+        Interpreter { storage }
+    }
+
+    fn interpret(
+        &mut self,
+        args: &[AST],
+        ast: &AST,
+        stream: DataInterpreter,
+    ) -> Option<DataInterpreter> {
+        match ast {
+            AST::Arrow(obj1, obj2) => self
+                .interpret(args, obj1, stream)
+                .and_then(|stream| self.interpret(args, obj2, stream)),
+            AST::Match(obj1, obj2) => self
+                .interpret(args, obj1, stream.clone())
+                .or_else(|| self.interpret(args, obj2, stream)),
+            AST::Method(args, obj) => self.interpret(args, obj, stream),
+            AST::Primitive(label) => self.interpret_primitive(args, label, stream),
+            AST::Literal(contents) => self.interpret_literal(args, contents, stream),
+        }
+    }
+
+    fn interpret_literal(
+        &mut self,
+        args: &[AST],
+        contents: &str,
+        stream: DataInterpreter,
+    ) -> Option<DataInterpreter> {
+        match stream == DataInterpreter::Void() && args.is_empty() {
+            true => Some(DataInterpreter::Str(contents.to_string())),
+            false => panic!(),
+        }
+    }
+
+    fn interpret_primitive(
+        &mut self,
+        args: &[AST],
+        label: &str,
+        stream: DataInterpreter,
+    ) -> Option<DataInterpreter> {
+        match label {
+            "int" => match stream {
+                DataInterpreter::Int(i) => Some(DataInterpreter::Int(i)),
+                DataInterpreter::Str(s) => Some(DataInterpreter::Int(s.parse::<i64>().ok()?)),
+                DataInterpreter::Void() => panic!(),
+            },
+            "str" => match stream {
+                DataInterpreter::Int(i) => Some(DataInterpreter::Str(i.to_string())),
+                DataInterpreter::Str(s) => Some(DataInterpreter::Str(s)),
+                DataInterpreter::Void() => panic!(),
+            },
+            "output" => {
+                match stream {
+                    DataInterpreter::Int(i) => println!("{}", i),
+                    DataInterpreter::Str(s) => println!("{}", s),
+                    DataInterpreter::Void() => panic!(),
+                };
+                Some(DataInterpreter::Void())
+            }
+            "store" => {
+                match self.interpret(&[], &args[0], DataInterpreter::Void()) {
+                    Some(DataInterpreter::Str(label)) => self.storage.insert(label, stream),
+                    _ => panic!(),
+                };
+                Some(DataInterpreter::Void())
+            }
+            "load" => {
+                if stream != DataInterpreter::Void() {
+                    panic!()
+                }
+                match self.interpret(&[], &args[0], DataInterpreter::Void()) {
+                    Some(DataInterpreter::Str(label)) => self.storage.get(&label).cloned(),
+                    _ => panic!(),
+                }
+            }
+            "add" | "sub" | "mul" | "mod" | "eq" | "ne" | "le" | "lt" => {
+                let o1 = self.interpret(&[], &args[0], DataInterpreter::Void())?;
+                let o2 = self.interpret(&[], &args[1], DataInterpreter::Void())?;
+                match (o1, o2) {
+                    (DataInterpreter::Int(i1), DataInterpreter::Int(i2)) => match label {
+                        "add" => Some(DataInterpreter::Int(i1 + i2)),
+                        "sub" => Some(DataInterpreter::Int(i1 - i2)),
+                        "mul" => Some(DataInterpreter::Int(i1 * i2)),
+                        "mod" => Some(DataInterpreter::Int(i1 % i2)),
+                        "eq" => (i1 == i2).then_some(DataInterpreter::Void()),
+                        "ne" => (i1 != i2).then_some(DataInterpreter::Void()),
+                        "le" => (i1 <= i2).then_some(DataInterpreter::Void()),
+                        "lt" => (i1 < i2).then_some(DataInterpreter::Void()),
+                        _ => panic!(),
+                    },
+                    _ => panic!(),
+                }
+            }
+            "loop" => {
+                let mut stream_loop = Some(stream);
+                while let Some(stream) = stream_loop {
+                    stream_loop = self.interpret(&[], &args[0], stream);
+                }
+                stream_loop
+            }
+            "pass" => Some(stream),
+            _ => panic!(),
+        }
+    }
+}
+
+#[derive(PartialEq, Clone, Debug)]
+enum DataInterpreter {
+    Int(i64),
+    Str(String),
+    Void(),
+}
+
+fn main() {
+    let args = env::args().collect::<Vec<String>>();
+    if args.len() != 2 {
+        eprintln!("Usage: hilang <filename>");
+        process::exit(1);
+    }
+    let Ok(mut file) = File::open(&args[1]) else {
+        eprintln!("Cannot open file: {}", &args[1]);
+        process::exit(1);
+    };
+    let mut contents = String::new();
+    let Ok(_) = file.read_to_string(&mut contents) else {
+        eprintln!("Cannot read file: {}", &args[1]);
+        process::exit(1);
+    };
+    let mut parser = Parser::new();
+    let Ok(ast) = parser.parse(&contents) else {
+        eprintln!("Cannot parse file: {}", &args[1]);
+        process::exit(1);
+    };
+    let mut interpreter = Interpreter::new(HashMap::new());
+    let Some(DataInterpreter::Void()) = interpreter.interpret(&[], &ast, DataInterpreter::Void())
+    else {
+        eprintln!("Cannot execute successfully: {}", &args[1]);
+        process::exit(1);
+    };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_1() {
+        let mut parser = Parser::new();
+        assert_eq!(parser.parse("{aaa ->bbb }"), Err(()));
+    }
+
+    #[test]
+    fn test_parse_2() {
+        let mut parser = Parser::new();
+        assert_eq!(
+            parser.parse("(aaa ->bbb )"),
+            Ok(AST::Arrow(
+                Box::new(AST::Primitive("aaa".to_string())),
+                Box::new(AST::Primitive("bbb".to_string()))
+            ))
+        );
+    }
+
+    #[test]
+    fn test_parse_3() {
+        let mut parser = Parser::new();
+        assert_eq!(
+            parser.parse("{inst1 -> inst2 -> {inst4 <- inst3} -> inst5}"),
+            Err(())
+        );
+    }
+
+    #[test]
+    fn test_parse_4() {
+        let mut parser = Parser::new();
+        assert_eq!(
+            parser.parse("(inst1 -> inst2 -> (inst4 <- inst3) -> inst5)"),
+            Ok(AST::Arrow(
+                Box::new(AST::Primitive("inst1".to_string())),
+                Box::new(AST::Arrow(
+                    Box::new(AST::Primitive("inst2".to_string())),
+                    Box::new(AST::Arrow(
+                        Box::new(AST::Arrow(
+                            Box::new(AST::Primitive("inst3".to_string())),
+                            Box::new(AST::Primitive("inst4".to_string())),
+                        )),
+                        Box::new(AST::Primitive("inst5".to_string())),
+                    ))
+                ))
+            ))
+        );
+    }
+
+    #[test]
+    fn test_parse_5() {
+        let mut parser = Parser::new();
+        assert_eq!(
+            parser.parse("{a=(P -> Q), b={c=(R -> {S <- T}), d={U <- V}}}"),
+            Err(())
+        );
+    }
+
+    #[test]
+    fn test_parse_6() {
+        let mut parser = Parser::new();
+        assert_eq!(
+            parser.parse("[ (a -> b) | (c -> d) ]"),
+            Ok(AST::Match(
+                Box::new(AST::Arrow(
+                    Box::new(AST::Primitive("a".to_string())),
+                    Box::new(AST::Primitive("b".to_string()))
+                )),
+                Box::new(AST::Arrow(
+                    Box::new(AST::Primitive("c".to_string())),
+                    Box::new(AST::Primitive("d".to_string()))
+                ))
+            ))
+        );
+    }
+
+    #[test]
+    fn test_parse_7() {
+        let mut parser = Parser::new();
+        assert_eq!(
+            parser.parse("<((P -> Q)<-(R -> S))>.a"),
+            Ok(AST::Method(
+                vec![AST::Arrow(
+                    Box::new(AST::Arrow(
+                        Box::new(AST::Primitive("R".to_string())),
+                        Box::new(AST::Primitive("S".to_string()))
+                    )),
+                    Box::new(AST::Arrow(
+                        Box::new(AST::Primitive("P".to_string())),
+                        Box::new(AST::Primitive("Q".to_string()))
+                    ))
+                )],
+                Box::new(AST::Primitive("a".to_string()))
+            ))
+        );
+    }
+
+    #[test]
+    fn test_parse_8() {
+        let mut parser = Parser::new();
+        assert_eq!(
+            parser
+                .parse(r#"(<"3">.int -> push -> <"2">.int -> push -> add -> pop -> <"i">.write)"#),
+            Ok(AST::Arrow(
+                Box::new(AST::Method(
+                    vec![AST::Literal("3".to_string())],
+                    Box::new(AST::Primitive("int".to_string()))
+                )),
+                Box::new(AST::Arrow(
+                    Box::new(AST::Primitive("push".to_string())),
+                    Box::new(AST::Arrow(
+                        Box::new(AST::Method(
+                            vec![AST::Literal("2".to_string())],
+                            Box::new(AST::Primitive("int".to_string()))
+                        )),
+                        Box::new(AST::Arrow(
+                            Box::new(AST::Primitive("push".to_string())),
+                            Box::new(AST::Arrow(
+                                Box::new(AST::Primitive("add".to_string())),
+                                Box::new(AST::Arrow(
+                                    Box::new(AST::Primitive("pop".to_string())),
+                                    Box::new(AST::Method(
+                                        vec![AST::Literal("i".to_string())],
+                                        Box::new(AST::Primitive("write".to_string()))
+                                    )),
+                                ))
+                            ))
+                        ))
+                    ))
+                ))
+            ))
+        );
+    }
+
+    #[test]
+    fn test_interpreter_1() {
+        let program = r#"(<("3" -> int), <"a">.load>.add -> <"b">.store -> <"b">.load)"#;
+        let mut parser = Parser::new();
+        let ast = parser.parse(program).unwrap();
+        let mut interpreter =
+            Interpreter::new(HashMap::from([("a".to_string(), DataInterpreter::Int(5))]));
+        assert_eq!(
+            interpreter.interpret(&[], &ast, DataInterpreter::Void()),
+            Some(DataInterpreter::Int(8))
+        );
+        assert_eq!(
+            interpreter.storage,
+            HashMap::from([
+                ("a".to_string(), DataInterpreter::Int(5)),
+                ("b".to_string(), DataInterpreter::Int(8))
+            ])
+        );
+    }
+
+    #[test]
+    fn test_interpreter_2() {
+        let program = r#"(
+    <"x">.store
+    -> "1" -> int -> <"i">.store
+    -> "0" -> int -> <"r">.store
+    -> [ <(
+        <<"i">.load, <"x">.load>.le
+        -> "2" -> int -> <"j">.store
+        -> [ <(
+            <<"j">.load, <"i">.load>.lt
+            -> <<"i">.load, <"j">.load>.mod -> <"t">.store
+            -> <<"t">.load, ("0" -> int)>.ne
+            -> <<"j">.load, ("1" -> int)>.add -> <"j">.store
+        )>.loop | [ (
+            <<"j">.load, <"i">.load>.eq
+            -> <<"r">.load, <"i">.load>.add -> <"r">.store
+        ) | pass ] ]
+        -> <<"i">.load, ("1" -> int)>.add -> <"i">.store
+    )>.loop | pass ]
+    -> <"r">.load
+)"#;
+        let mut parser = Parser::new();
+        let ast = parser.parse(program).unwrap();
+        let mut interpreter = Interpreter::new(HashMap::new());
+        assert_eq!(
+            interpreter.interpret(&[], &ast, DataInterpreter::Int(30)),
+            Some(DataInterpreter::Int(129))
+        );
+    }
+}

@@ -1,0 +1,11 @@
+[package]
+name = "hilang"
+version = "0.1.0"
+edition = "2024"
+description = "A small programming language"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/mushitoriami/hilang"
+
+[dependencies]
+kohaku = "0.1.4"
