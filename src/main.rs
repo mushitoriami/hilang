@@ -28,7 +28,7 @@ impl Parser {
     }
 
     fn parse(&mut self, input: &str) -> Result<AST, ()> {
-        let mut iter = self.tokenizer.tokenize(input).map(Result::unwrap);
+        let mut iter = self.tokenizer.tokenize(input).map_while(|x| x.ok());
         let obj = Self::take_object(&mut iter)?;
         if iter.next().is_some() {
             return Err(());
@@ -371,6 +371,12 @@ mod tests {
                 ))
             ))
         );
+    }
+
+    #[test]
+    fn test_parse_9() {
+        let mut parser = Parser::new();
+        assert_eq!(parser.parse("#"), Err(()));
     }
 
     #[test]
