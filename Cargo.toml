@@ -9,3 +9,4 @@ repository = "https://github.com/mushitoriami/hilang"
 
 [dependencies]
 kohaku = "0.1.4"
+suzuran = "0.1.1"
