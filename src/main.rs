@@ -21,10 +21,10 @@ struct Parser {
 impl Parser {
     fn new() -> Self {
         let tokenizer = kohaku::Tokenizer::new([
-            "|", "->", "<-", "=<", "==", "!=", "<", "+", "-", "*", "%", ".", "(", ")",
+            ";", "|", "->", "<-", "=<", "==", "!=", "<", "+", "-", "*", "%", ".", "(", ")",
         ]);
         let parser = suzuran::Parser::new([
-            "|", "->", "<-", "=<", "==", "!=", "<", "+", "-", "*", "%", ".",
+            ";", "|", "->", "<-", "=<", "==", "!=", "<", "+", "-", "*", "%", ".",
         ]);
         Parser {
             tokenizer: tokenizer,
@@ -50,6 +50,7 @@ impl Parser {
                 let a1 = Self::convert(*n1)?;
                 let a2 = Self::convert(*n2)?;
                 match label.as_str() {
+                    ";" => Ok(AST::Arrow(Box::new(a1), Box::new(a2))),
                     "->" => Ok(AST::Arrow(Box::new(a1), Box::new(a2))),
                     "<-" => Ok(AST::Arrow(Box::new(a2), Box::new(a1))),
                     "|" => Ok(AST::Match(Box::new(a1), Box::new(a2))),
@@ -372,24 +373,21 @@ mod tests {
 
     #[test]
     fn test_interpreter_2() {
-        let program = r#""x".store
--> "1" -> int -> "i".store
--> "0" -> int -> "r".store
--> ( (
-    "i".load =< "x".load
-    -> "2" -> int -> "j".store
-    -> ( (
-        "j".load < "i".load
-        -> "i".load % "j".load -> "t".store
-        -> "t".load != ("0" -> int)
-        -> "j".load + ("1" -> int) -> "j".store
-    ).loop | (
-        "j".load == "i".load
-        -> "r".load + "i".load -> "r".store
-    ) | pass )
-    -> "i".load + ("1" -> int) -> "i".store
-).loop | pass )
--> "r".load"#;
+        let program = r#""x".store;
+"1" -> int -> "i".store;
+"0" -> int -> "r".store;
+(
+    "i".load =< "x".load;
+    "2" -> int -> "j".store;
+    (
+        "j".load < "i".load -> ("i".load % "j".load) != ("0" -> int);
+        "j".load + ("1" -> int) -> "j".store
+    ).loop | pass;
+    "j".load == "i".load -> "r".load + "i".load -> "r".store
+        | pass;
+    "i".load + ("1" -> int) -> "i".store
+).loop | pass;
+"r".load"#;
         let mut parser = Parser::new();
         let ast = parser.parse(program).unwrap();
         let mut interpreter = Interpreter::new(HashMap::new());

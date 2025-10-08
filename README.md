@@ -4,11 +4,11 @@ A small programming language
 ```
 $ cat program.hi
 (
-    "30" -> int -> "x".store
-    -> "1" -> int -> "i".store
-    -> (
-        "i".load =< "x".load
-        -> (
+    "30" -> int -> "x".store;
+    "1" -> int -> "i".store;
+    (
+        "i".load =< "x".load;
+        (
             "i".load % ("15" -> int) -> "t".store
             -> "t".load == ("0" -> int)
             -> "FizzBuzz" -> output
@@ -22,8 +22,8 @@ $ cat program.hi
             -> "Buzz" -> output
         |
             "i".load -> output
-        )
-        -> "i".load + ("1" -> int) -> "i".store
+        );
+        "i".load + ("1" -> int) -> "i".store
     ).loop | pass
 )
 $ hilang program.hi
