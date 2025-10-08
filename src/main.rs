@@ -15,76 +15,48 @@ enum AST {
 
 struct Parser {
     tokenizer: kohaku::Tokenizer,
+    parser: suzuran::Parser,
 }
 
 impl Parser {
     fn new() -> Self {
         let tokenizer = kohaku::Tokenizer::new([
-            "->", "<-", "(", ")", "{", "=", ",", "}", "[", "|", "]", "<", ">", ".",
+            "|", "->", "<-", "=<", "==", "!=", "<", "+", "-", "*", "%", ".", "(", ")",
+        ]);
+        let parser = suzuran::Parser::new([
+            "|", "->", "<-", "=<", "==", "!=", "<", "+", "-", "*", "%", ".",
         ]);
         Parser {
             tokenizer: tokenizer,
+            parser: parser,
         }
     }
 
     fn parse(&mut self, input: &str) -> Result<AST, ()> {
-        let mut iter = self.tokenizer.tokenize(input).map_while(|x| x.ok());
-        let obj = Self::take_object(&mut iter)?;
-        if iter.next().is_some() {
-            return Err(());
-        }
-        Ok(obj)
+        let iter = self.tokenizer.tokenize(input).map_while(|x| x.ok());
+        let node = self.parser.parse(iter).ok_or(())?;
+        Self::convert(node)
     }
 
-    fn take_chain<'a, I: Iterator<Item = &'a str>>(iter: &mut I) -> Result<AST, ()> {
-        let obj = Self::take_object(iter)?;
-        match iter.next() {
-            Some("->") => Ok(AST::Arrow(Box::new(obj), Box::new(Self::take_chain(iter)?))),
-            Some("<-") => Ok(AST::Arrow(Box::new(Self::take_chain(iter)?), Box::new(obj))),
-            Some(")") => Ok(obj),
-            _ => Err(()),
-        }
-    }
-
-    fn take_match<'a, I: Iterator<Item = &'a str>>(iter: &mut I) -> Result<AST, ()> {
-        let obj = Self::take_object(iter)?;
-        match iter.next() {
-            Some("|") => {
-                let obj2 = Self::take_object(iter)?;
-                match iter.next() {
-                    Some("]") => Ok(AST::Match(Box::new(obj), Box::new(obj2))),
-                    _ => Err(()),
+    fn convert(node: suzuran::Node) -> Result<AST, ()> {
+        match node {
+            suzuran::Node::Placeholder() => Err(()),
+            suzuran::Node::Parentheses(n) => Self::convert(*n),
+            suzuran::Node::Primitive(label) => match label.starts_with(r#"""#) {
+                true => Ok(AST::Literal(label.trim_matches('"').to_string())),
+                false => Ok(AST::Primitive(label)),
+            },
+            suzuran::Node::Operator(label, n1, n2) => {
+                let a1 = Self::convert(*n1)?;
+                let a2 = Self::convert(*n2)?;
+                match label.as_str() {
+                    "->" => Ok(AST::Arrow(Box::new(a1), Box::new(a2))),
+                    "<-" => Ok(AST::Arrow(Box::new(a2), Box::new(a1))),
+                    "|" => Ok(AST::Match(Box::new(a1), Box::new(a2))),
+                    "." => Ok(AST::Method(vec![a1], Box::new(a2))),
+                    _ => Ok(AST::Method(vec![a1, a2], Box::new(AST::Primitive(label)))),
                 }
             }
-            _ => Err(()),
-        }
-    }
-
-    fn take_method<'a, I: Iterator<Item = &'a str>>(iter: &mut I) -> Result<AST, ()> {
-        let mut args = vec![Self::take_object(iter)?];
-        loop {
-            match iter.next() {
-                Some(",") => args.push(Self::take_object(iter)?),
-                Some(">") => break,
-                _ => return Err(()),
-            }
-        }
-        match iter.next() {
-            Some(".") => Ok(AST::Method(args, Box::new(Self::take_object(iter)?))),
-            _ => Err(()),
-        }
-    }
-
-    fn take_object<'a, I: Iterator<Item = &'a str>>(iter: &mut I) -> Result<AST, ()> {
-        match iter.next() {
-            Some("(") => Self::take_chain(iter),
-            Some("[") => Self::take_match(iter),
-            Some("<") => Self::take_method(iter),
-            Some(label) => match label.starts_with(r#"""#) {
-                true => Ok(AST::Literal(label.trim_matches('"').to_string())),
-                false => Ok(AST::Primitive(label.to_string())),
-            },
-            _ => Err(()),
         }
     }
 }
@@ -170,19 +142,19 @@ impl Interpreter {
                     _ => panic!(),
                 }
             }
-            "add" | "sub" | "mul" | "mod" | "eq" | "ne" | "le" | "lt" => {
+            "+" | "-" | "*" | "%" | "==" | "!=" | "=<" | "<" => {
                 let o1 = self.interpret(&[], &args[0], DataInterpreter::Void())?;
                 let o2 = self.interpret(&[], &args[1], DataInterpreter::Void())?;
                 match (o1, o2) {
                     (DataInterpreter::Int(i1), DataInterpreter::Int(i2)) => match label {
-                        "add" => Some(DataInterpreter::Int(i1 + i2)),
-                        "sub" => Some(DataInterpreter::Int(i1 - i2)),
-                        "mul" => Some(DataInterpreter::Int(i1 * i2)),
-                        "mod" => Some(DataInterpreter::Int(i1 % i2)),
-                        "eq" => (i1 == i2).then_some(DataInterpreter::Void()),
-                        "ne" => (i1 != i2).then_some(DataInterpreter::Void()),
-                        "le" => (i1 <= i2).then_some(DataInterpreter::Void()),
-                        "lt" => (i1 < i2).then_some(DataInterpreter::Void()),
+                        "+" => Some(DataInterpreter::Int(i1 + i2)),
+                        "-" => Some(DataInterpreter::Int(i1 - i2)),
+                        "*" => Some(DataInterpreter::Int(i1 * i2)),
+                        "%" => Some(DataInterpreter::Int(i1 % i2)),
+                        "==" => (i1 == i2).then_some(DataInterpreter::Void()),
+                        "!=" => (i1 != i2).then_some(DataInterpreter::Void()),
+                        "=<" => (i1 <= i2).then_some(DataInterpreter::Void()),
+                        "<" => (i1 < i2).then_some(DataInterpreter::Void()),
                         _ => panic!(),
                     },
                     _ => panic!(),
@@ -271,19 +243,19 @@ mod tests {
     fn test_parse_4() {
         let mut parser = Parser::new();
         assert_eq!(
-            parser.parse("(inst1 -> inst2 -> (inst4 <- inst3) -> inst5)"),
+            parser.parse("inst1 -> inst2 -> (inst4 <- inst3) -> inst5"),
             Ok(AST::Arrow(
-                Box::new(AST::Primitive("inst1".to_string())),
                 Box::new(AST::Arrow(
-                    Box::new(AST::Primitive("inst2".to_string())),
                     Box::new(AST::Arrow(
-                        Box::new(AST::Arrow(
-                            Box::new(AST::Primitive("inst3".to_string())),
-                            Box::new(AST::Primitive("inst4".to_string())),
-                        )),
-                        Box::new(AST::Primitive("inst5".to_string())),
+                        Box::new(AST::Primitive("inst1".to_string())),
+                        Box::new(AST::Primitive("inst2".to_string()))
+                    )),
+                    Box::new(AST::Arrow(
+                        Box::new(AST::Primitive("inst3".to_string())),
+                        Box::new(AST::Primitive("inst4".to_string()))
                     ))
-                ))
+                )),
+                Box::new(AST::Primitive("inst5".to_string()))
             ))
         );
     }
@@ -301,7 +273,7 @@ mod tests {
     fn test_parse_6() {
         let mut parser = Parser::new();
         assert_eq!(
-            parser.parse("[ (a -> b) | (c -> d) ]"),
+            parser.parse("(a -> b | c -> d)"),
             Ok(AST::Match(
                 Box::new(AST::Arrow(
                     Box::new(AST::Primitive("a".to_string())),
@@ -319,7 +291,7 @@ mod tests {
     fn test_parse_7() {
         let mut parser = Parser::new();
         assert_eq!(
-            parser.parse("<((P -> Q)<-(R -> S))>.a"),
+            parser.parse("((P -> Q)<-(R -> S)).a"),
             Ok(AST::Method(
                 vec![AST::Arrow(
                     Box::new(AST::Arrow(
@@ -340,34 +312,33 @@ mod tests {
     fn test_parse_8() {
         let mut parser = Parser::new();
         assert_eq!(
-            parser
-                .parse(r#"(<"3">.int -> push -> <"2">.int -> push -> add -> pop -> <"i">.write)"#),
+            parser.parse(r#"("3".int -> push -> "2".int -> push -> add -> pop -> "i".write)"#),
             Ok(AST::Arrow(
-                Box::new(AST::Method(
-                    vec![AST::Literal("3".to_string())],
-                    Box::new(AST::Primitive("int".to_string()))
-                )),
                 Box::new(AST::Arrow(
-                    Box::new(AST::Primitive("push".to_string())),
                     Box::new(AST::Arrow(
-                        Box::new(AST::Method(
-                            vec![AST::Literal("2".to_string())],
-                            Box::new(AST::Primitive("int".to_string()))
-                        )),
                         Box::new(AST::Arrow(
-                            Box::new(AST::Primitive("push".to_string())),
                             Box::new(AST::Arrow(
-                                Box::new(AST::Primitive("add".to_string())),
                                 Box::new(AST::Arrow(
-                                    Box::new(AST::Primitive("pop".to_string())),
                                     Box::new(AST::Method(
-                                        vec![AST::Literal("i".to_string())],
-                                        Box::new(AST::Primitive("write".to_string()))
+                                        vec![AST::Literal("3".to_string())],
+                                        Box::new(AST::Primitive("int".to_string()))
                                     )),
+                                    Box::new(AST::Primitive("push".to_string()))
+                                )),
+                                Box::new(AST::Method(
+                                    vec![AST::Literal("2".to_string())],
+                                    Box::new(AST::Primitive("int".to_string()))
                                 ))
-                            ))
-                        ))
-                    ))
+                            )),
+                            Box::new(AST::Primitive("push".to_string()))
+                        )),
+                        Box::new(AST::Primitive("add".to_string()))
+                    )),
+                    Box::new(AST::Primitive("pop".to_string()))
+                )),
+                Box::new(AST::Method(
+                    vec![AST::Literal("i".to_string())],
+                    Box::new(AST::Primitive("write".to_string()))
                 ))
             ))
         );
@@ -381,7 +352,7 @@ mod tests {
 
     #[test]
     fn test_interpreter_1() {
-        let program = r#"(<("3" -> int), <"a">.load>.add -> <"b">.store -> <"b">.load)"#;
+        let program = r#"("3" -> int) + "a".load -> "b".store -> "b".load"#;
         let mut parser = Parser::new();
         let ast = parser.parse(program).unwrap();
         let mut interpreter =
@@ -401,26 +372,24 @@ mod tests {
 
     #[test]
     fn test_interpreter_2() {
-        let program = r#"(
-    <"x">.store
-    -> "1" -> int -> <"i">.store
-    -> "0" -> int -> <"r">.store
-    -> [ <(
-        <<"i">.load, <"x">.load>.le
-        -> "2" -> int -> <"j">.store
-        -> [ <(
-            <<"j">.load, <"i">.load>.lt
-            -> <<"i">.load, <"j">.load>.mod -> <"t">.store
-            -> <<"t">.load, ("0" -> int)>.ne
-            -> <<"j">.load, ("1" -> int)>.add -> <"j">.store
-        )>.loop | [ (
-            <<"j">.load, <"i">.load>.eq
-            -> <<"r">.load, <"i">.load>.add -> <"r">.store
-        ) | pass ] ]
-        -> <<"i">.load, ("1" -> int)>.add -> <"i">.store
-    )>.loop | pass ]
-    -> <"r">.load
-)"#;
+        let program = r#""x".store
+-> "1" -> int -> "i".store
+-> "0" -> int -> "r".store
+-> ( (
+    "i".load =< "x".load
+    -> "2" -> int -> "j".store
+    -> ( (
+        "j".load < "i".load
+        -> "i".load % "j".load -> "t".store
+        -> "t".load != ("0" -> int)
+        -> "j".load + ("1" -> int) -> "j".store
+    ).loop | (
+        "j".load == "i".load
+        -> "r".load + "i".load -> "r".store
+    ) | pass )
+    -> "i".load + ("1" -> int) -> "i".store
+).loop | pass )
+-> "r".load"#;
         let mut parser = Parser::new();
         let ast = parser.parse(program).unwrap();
         let mut interpreter = Interpreter::new(HashMap::new());
