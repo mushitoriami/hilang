@@ -6,6 +6,7 @@ use std::process;
 
 #[derive(Debug, PartialEq)]
 enum AST {
+    Scope(Box<AST>),
     Arrow(Box<AST>, Box<AST>),
     Match(Box<AST>, Box<AST>),
     Method(Vec<AST>, Box<AST>),
@@ -41,7 +42,7 @@ impl Parser {
     fn convert(node: suzuran::Node) -> Result<AST, ()> {
         match node {
             suzuran::Node::Placeholder() => Err(()),
-            suzuran::Node::Parentheses(n) => Self::convert(*n),
+            suzuran::Node::Parentheses(n) => Ok(AST::Scope(Box::new(Self::convert(*n)?))),
             suzuran::Node::Primitive(label) => match label.starts_with(r#"""#) {
                 true => Ok(AST::Literal(label.trim_matches('"').to_string())),
                 false => Ok(AST::Primitive(label)),
@@ -87,6 +88,7 @@ impl Interpreter {
             AST::Method(args, obj) => self.interpret(args, obj, stream),
             AST::Primitive(label) => self.interpret_primitive(args, label, stream),
             AST::Literal(contents) => self.interpret_literal(args, contents, stream),
+            AST::Scope(obj) => self.interpret(args, obj, stream),
         }
     }
 
@@ -224,10 +226,10 @@ mod tests {
         let mut parser = Parser::new();
         assert_eq!(
             parser.parse("(aaa ->bbb )"),
-            Ok(AST::Arrow(
+            Ok(AST::Scope(Box::new(AST::Arrow(
                 Box::new(AST::Primitive("aaa".to_string())),
                 Box::new(AST::Primitive("bbb".to_string()))
-            ))
+            ))))
         );
     }
 
@@ -251,10 +253,10 @@ mod tests {
                         Box::new(AST::Primitive("inst1".to_string())),
                         Box::new(AST::Primitive("inst2".to_string()))
                     )),
-                    Box::new(AST::Arrow(
+                    Box::new(AST::Scope(Box::new(AST::Arrow(
                         Box::new(AST::Primitive("inst3".to_string())),
                         Box::new(AST::Primitive("inst4".to_string()))
-                    ))
+                    ))))
                 )),
                 Box::new(AST::Primitive("inst5".to_string()))
             ))
@@ -275,7 +277,7 @@ mod tests {
         let mut parser = Parser::new();
         assert_eq!(
             parser.parse("(a -> b | c -> d)"),
-            Ok(AST::Match(
+            Ok(AST::Scope(Box::new(AST::Match(
                 Box::new(AST::Arrow(
                     Box::new(AST::Primitive("a".to_string())),
                     Box::new(AST::Primitive("b".to_string()))
@@ -284,7 +286,7 @@ mod tests {
                     Box::new(AST::Primitive("c".to_string())),
                     Box::new(AST::Primitive("d".to_string()))
                 ))
-            ))
+            ))))
         );
     }
 
@@ -294,16 +296,16 @@ mod tests {
         assert_eq!(
             parser.parse("((P -> Q)<-(R -> S)).a"),
             Ok(AST::Method(
-                vec![AST::Arrow(
-                    Box::new(AST::Arrow(
+                vec![AST::Scope(Box::new(AST::Arrow(
+                    Box::new(AST::Scope(Box::new(AST::Arrow(
                         Box::new(AST::Primitive("R".to_string())),
                         Box::new(AST::Primitive("S".to_string()))
-                    )),
-                    Box::new(AST::Arrow(
+                    )))),
+                    Box::new(AST::Scope(Box::new(AST::Arrow(
                         Box::new(AST::Primitive("P".to_string())),
                         Box::new(AST::Primitive("Q".to_string()))
-                    ))
-                )],
+                    ))))
+                )))],
                 Box::new(AST::Primitive("a".to_string()))
             ))
         );
@@ -314,7 +316,7 @@ mod tests {
         let mut parser = Parser::new();
         assert_eq!(
             parser.parse(r#"("3".int -> push -> "2".int -> push -> add -> pop -> "i".write)"#),
-            Ok(AST::Arrow(
+            Ok(AST::Scope(Box::new(AST::Arrow(
                 Box::new(AST::Arrow(
                     Box::new(AST::Arrow(
                         Box::new(AST::Arrow(
@@ -341,7 +343,7 @@ mod tests {
                     vec![AST::Literal("i".to_string())],
                     Box::new(AST::Primitive("write".to_string()))
                 ))
-            ))
+            ))))
         );
     }
 
