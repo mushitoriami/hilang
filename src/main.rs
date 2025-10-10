@@ -83,9 +83,16 @@ impl Interpreter {
                 .or_else(|| self.interpret(args, obj2, stream)),
             AST::Method(args, obj) => self.interpret(args, obj, stream),
             AST::Primitive(label) => self.interpret_primitive(args, label, stream),
-            AST::Variable(label) => todo!(),
             AST::Literal(contents) => self.interpret_literal(args, contents, stream),
             AST::Scope(obj) => self.interpret(args, obj, stream),
+            AST::Variable(label) => {
+                if self.storage.get(label).is_none() {
+                    self.storage.insert(label.clone(), stream);
+                    Some(DataInterpreter::Void())
+                } else {
+                    panic!()
+                }
+            }
         }
     }
 
@@ -107,6 +114,14 @@ impl Interpreter {
         label: &str,
         stream: DataInterpreter,
     ) -> Option<DataInterpreter> {
+        if let Some(data) = self.storage.get(label).cloned() {
+            if stream == DataInterpreter::Void() {
+                return Some(data);
+            } else {
+                self.storage.insert(label.to_string(), stream);
+                return Some(DataInterpreter::Void());
+            }
+        }
         match label {
             "int" => match stream {
                 DataInterpreter::Int(i) => Some(DataInterpreter::Int(i)),
@@ -355,40 +370,33 @@ mod tests {
 
     #[test]
     fn test_interpreter_1() {
-        let program = r#"("3" -> int) + "a".load -> "b".store -> "b".load"#;
+        let program = r#"("3" -> int) + ("5" -> int) -> \b -> b"#;
         let ast = parse_ast(program).unwrap();
-        let mut interpreter =
-            Interpreter::new(HashMap::from([("a".to_string(), DataInterpreter::Int(5))]));
+        let mut interpreter = Interpreter::new(HashMap::from([]));
         assert_eq!(
             interpreter.interpret(&[], &ast, DataInterpreter::Void()),
             Some(DataInterpreter::Int(8))
-        );
-        assert_eq!(
-            interpreter.storage,
-            HashMap::from([
-                ("a".to_string(), DataInterpreter::Int(5)),
-                ("b".to_string(), DataInterpreter::Int(8))
-            ])
         );
     }
 
     #[test]
     fn test_interpreter_2() {
-        let program = r#""x".store;
-"1" -> int -> "i".store;
-"0" -> int -> "r".store;
+        let program = r#"\x;
+"1" -> int -> \i;
+"0" -> int -> \r;
+\j;
 (
-    "i".load =< "x".load;
-    "2" -> int -> "j".store;
+    i =< x;
+    "2" -> int -> j;
     (
-        "j".load < "i".load -> ("i".load % "j".load) != ("0" -> int);
-        "j".load + ("1" -> int) -> "j".store
+        j < i -> (i % j) != ("0" -> int);
+        j + ("1" -> int) -> j
     ).loop | pass;
-    "j".load == "i".load -> "r".load + "i".load -> "r".store
+    j == i -> r + i -> r
         | pass;
-    "i".load + ("1" -> int) -> "i".store
+    i + ("1" -> int) -> i
 ).loop | pass;
-"r".load"#;
+r"#;
         let ast = parse_ast(program).unwrap();
         let mut interpreter = Interpreter::new(HashMap::new());
         assert_eq!(
