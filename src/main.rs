@@ -60,20 +60,28 @@ fn convert(node: suzuran::Node) -> Result<AST, ()> {
 }
 
 struct Interpreter {
-    storage: HashMap<String, DataInterpreter>,
+    namespaces: Vec<HashMap<String, DataInterpreter>>,
 }
 
 impl Interpreter {
-    fn new(storage: HashMap<String, DataInterpreter>) -> Self {
-        Interpreter { storage }
+    fn new(global: HashMap<String, DataInterpreter>) -> Self {
+        Interpreter {
+            namespaces: vec![global],
+        }
     }
 
     fn set_variable(&mut self, label: &str, value: DataInterpreter) {
-        self.storage.insert(label.to_string(), value);
+        let iter_mut = self.namespaces.iter_mut().rev();
+        match iter_mut.filter(|x| x.contains_key(label)).next() {
+            Some(namespace) => namespace,
+            None => self.namespaces.last_mut().unwrap(),
+        }
+        .insert(label.to_string(), value);
     }
 
     fn get_variable(&self, label: &str) -> Option<DataInterpreter> {
-        self.storage.get(label).cloned()
+        let iter = self.namespaces.iter().rev();
+        return iter.filter_map(|x| x.get(label)).next().cloned();
     }
 
     fn interpret(
@@ -92,7 +100,12 @@ impl Interpreter {
             AST::Method(args, obj) => self.interpret(args, obj, stream),
             AST::Primitive(label) => self.interpret_primitive(args, label, stream),
             AST::Literal(contents) => self.interpret_literal(args, contents, stream),
-            AST::Scope(obj) => self.interpret(args, obj, stream),
+            AST::Scope(obj) => {
+                self.namespaces.push(HashMap::new());
+                let res = self.interpret(args, obj, stream);
+                self.namespaces.pop();
+                res
+            }
             AST::Variable(label) => {
                 if self.get_variable(label).is_none() {
                     self.set_variable(label, stream);
@@ -376,10 +389,9 @@ mod tests {
         let program = r#"\x;
 "1" -> int -> \i;
 "0" -> int -> \r;
-\j;
 (
     i =< x;
-    "2" -> int -> j;
+    "2" -> int -> \j;
     (
         j < i -> (i % j) != ("0" -> int);
         j + ("1" -> int) -> j
