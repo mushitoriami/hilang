@@ -12,14 +12,15 @@ enum AST {
     Method(Vec<AST>, Box<AST>),
     Primitive(String),
     Literal(String),
+    Variable(String),
 }
 
 fn parse_ast(input: &str) -> Result<AST, ()> {
     let mut tokenizer = kohaku::Tokenizer::new([
-        ";", "|", "->", "<-", "=<", "==", "!=", "<", "+", "-", "*", "%", ".", "(", ")",
+        ";", "|", "->", "<-", "=<", "==", "!=", "<", "+", "-", "*", "%", "\\", ".", "(", ")",
     ]);
     let mut parser = suzuran::Parser::new([
-        ";", "|", "->", "<-", "=<", "==", "!=", "<", "+", "-", "*", "%", ".",
+        ";", "|", "->", "<-", "=<", "==", "!=", "<", "+", "-", "*", "%", "\\", ".",
     ]);
     let iter = tokenizer.tokenize(input).map_while(|x| x.ok());
     let node = parser.parse(iter).ok_or(())?;
@@ -34,6 +35,15 @@ fn convert(node: suzuran::Node) -> Result<AST, ()> {
             true => Ok(AST::Literal(label.trim_matches('"').to_string())),
             false => Ok(AST::Primitive(label)),
         },
+        suzuran::Node::Operator(label, n1, n2) if label == "\\" => {
+            if let suzuran::Node::Placeholder() = *n1
+                && let suzuran::Node::Primitive(label) = *n2
+            {
+                Ok(AST::Variable(label))
+            } else {
+                Err(())
+            }
+        }
         suzuran::Node::Operator(label, n1, n2) => {
             let a1 = convert(*n1)?;
             let a2 = convert(*n2)?;
@@ -73,6 +83,7 @@ impl Interpreter {
                 .or_else(|| self.interpret(args, obj2, stream)),
             AST::Method(args, obj) => self.interpret(args, obj, stream),
             AST::Primitive(label) => self.interpret_primitive(args, label, stream),
+            AST::Variable(label) => todo!(),
             AST::Literal(contents) => self.interpret_literal(args, contents, stream),
             AST::Scope(obj) => self.interpret(args, obj, stream),
         }
@@ -335,6 +346,11 @@ mod tests {
     #[test]
     fn test_parse_9() {
         assert_eq!(parse_ast("#"), Err(()));
+    }
+
+    #[test]
+    fn test_parse_10() {
+        assert_eq!(parse_ast(r#"\abc"#), Ok(AST::Variable("abc".to_string())));
     }
 
     #[test]
