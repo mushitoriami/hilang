@@ -68,6 +68,14 @@ impl Interpreter {
         Interpreter { storage }
     }
 
+    fn set_variable(&mut self, label: &str, value: DataInterpreter) {
+        self.storage.insert(label.to_string(), value);
+    }
+
+    fn get_variable(&self, label: &str) -> Option<DataInterpreter> {
+        self.storage.get(label).cloned()
+    }
+
     fn interpret(
         &mut self,
         args: &[AST],
@@ -86,8 +94,8 @@ impl Interpreter {
             AST::Literal(contents) => self.interpret_literal(args, contents, stream),
             AST::Scope(obj) => self.interpret(args, obj, stream),
             AST::Variable(label) => {
-                if self.storage.get(label).is_none() {
-                    self.storage.insert(label.clone(), stream);
+                if self.get_variable(label).is_none() {
+                    self.set_variable(label, stream);
                     Some(DataInterpreter::Void())
                 } else {
                     panic!()
@@ -114,11 +122,11 @@ impl Interpreter {
         label: &str,
         stream: DataInterpreter,
     ) -> Option<DataInterpreter> {
-        if let Some(data) = self.storage.get(label).cloned() {
+        if let Some(data) = self.get_variable(label) {
             if stream == DataInterpreter::Void() {
                 return Some(data);
             } else {
-                self.storage.insert(label.to_string(), stream);
+                self.set_variable(label, stream);
                 return Some(DataInterpreter::Void());
             }
         }
@@ -151,7 +159,7 @@ impl Interpreter {
             }
             "store" => {
                 match self.interpret(&[], &args[0], DataInterpreter::Void()) {
-                    Some(DataInterpreter::Str(label)) => self.storage.insert(label, stream),
+                    Some(DataInterpreter::Str(label)) => self.set_variable(&label, stream),
                     _ => panic!(),
                 };
                 Some(DataInterpreter::Void())
@@ -161,7 +169,7 @@ impl Interpreter {
                     panic!()
                 }
                 match self.interpret(&[], &args[0], DataInterpreter::Void()) {
-                    Some(DataInterpreter::Str(label)) => self.storage.get(&label).cloned(),
+                    Some(DataInterpreter::Str(label)) => self.get_variable(&label),
                     _ => panic!(),
                 }
             }
