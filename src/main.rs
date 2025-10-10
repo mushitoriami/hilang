@@ -14,50 +14,36 @@ enum AST {
     Literal(String),
 }
 
-struct Parser {
-    tokenizer: kohaku::Tokenizer,
-    parser: suzuran::Parser,
+fn parse_ast(input: &str) -> Result<AST, ()> {
+    let mut tokenizer = kohaku::Tokenizer::new([
+        ";", "|", "->", "<-", "=<", "==", "!=", "<", "+", "-", "*", "%", ".", "(", ")",
+    ]);
+    let mut parser = suzuran::Parser::new([
+        ";", "|", "->", "<-", "=<", "==", "!=", "<", "+", "-", "*", "%", ".",
+    ]);
+    let iter = tokenizer.tokenize(input).map_while(|x| x.ok());
+    let node = parser.parse(iter).ok_or(())?;
+    convert(node)
 }
 
-impl Parser {
-    fn new() -> Self {
-        let tokenizer = kohaku::Tokenizer::new([
-            ";", "|", "->", "<-", "=<", "==", "!=", "<", "+", "-", "*", "%", ".", "(", ")",
-        ]);
-        let parser = suzuran::Parser::new([
-            ";", "|", "->", "<-", "=<", "==", "!=", "<", "+", "-", "*", "%", ".",
-        ]);
-        Parser {
-            tokenizer: tokenizer,
-            parser: parser,
-        }
-    }
-
-    fn parse(&mut self, input: &str) -> Result<AST, ()> {
-        let iter = self.tokenizer.tokenize(input).map_while(|x| x.ok());
-        let node = self.parser.parse(iter).ok_or(())?;
-        Self::convert(node)
-    }
-
-    fn convert(node: suzuran::Node) -> Result<AST, ()> {
-        match node {
-            suzuran::Node::Placeholder() => Err(()),
-            suzuran::Node::Parentheses(n) => Ok(AST::Scope(Box::new(Self::convert(*n)?))),
-            suzuran::Node::Primitive(label) => match label.starts_with(r#"""#) {
-                true => Ok(AST::Literal(label.trim_matches('"').to_string())),
-                false => Ok(AST::Primitive(label)),
-            },
-            suzuran::Node::Operator(label, n1, n2) => {
-                let a1 = Self::convert(*n1)?;
-                let a2 = Self::convert(*n2)?;
-                match label.as_str() {
-                    ";" => Ok(AST::Arrow(Box::new(a1), Box::new(a2))),
-                    "->" => Ok(AST::Arrow(Box::new(a1), Box::new(a2))),
-                    "<-" => Ok(AST::Arrow(Box::new(a2), Box::new(a1))),
-                    "|" => Ok(AST::Match(Box::new(a1), Box::new(a2))),
-                    "." => Ok(AST::Method(vec![a1], Box::new(a2))),
-                    _ => Ok(AST::Method(vec![a1, a2], Box::new(AST::Primitive(label)))),
-                }
+fn convert(node: suzuran::Node) -> Result<AST, ()> {
+    match node {
+        suzuran::Node::Placeholder() => Err(()),
+        suzuran::Node::Parentheses(n) => Ok(AST::Scope(Box::new(convert(*n)?))),
+        suzuran::Node::Primitive(label) => match label.starts_with(r#"""#) {
+            true => Ok(AST::Literal(label.trim_matches('"').to_string())),
+            false => Ok(AST::Primitive(label)),
+        },
+        suzuran::Node::Operator(label, n1, n2) => {
+            let a1 = convert(*n1)?;
+            let a2 = convert(*n2)?;
+            match label.as_str() {
+                ";" => Ok(AST::Arrow(Box::new(a1), Box::new(a2))),
+                "->" => Ok(AST::Arrow(Box::new(a1), Box::new(a2))),
+                "<-" => Ok(AST::Arrow(Box::new(a2), Box::new(a1))),
+                "|" => Ok(AST::Match(Box::new(a1), Box::new(a2))),
+                "." => Ok(AST::Method(vec![a1], Box::new(a2))),
+                _ => Ok(AST::Method(vec![a1, a2], Box::new(AST::Primitive(label)))),
             }
         }
     }
@@ -206,8 +192,7 @@ fn main() {
         eprintln!("Cannot read file: {}", &args[1]);
         process::exit(1);
     };
-    let mut parser = Parser::new();
-    let Ok(ast) = parser.parse(&contents) else {
+    let Ok(ast) = parse_ast(&contents) else {
         eprintln!("Cannot parse file: {}", &args[1]);
         process::exit(1);
     };
@@ -225,15 +210,13 @@ mod tests {
 
     #[test]
     fn test_parse_1() {
-        let mut parser = Parser::new();
-        assert_eq!(parser.parse("{aaa ->bbb }"), Err(()));
+        assert_eq!(parse_ast("{aaa ->bbb }"), Err(()));
     }
 
     #[test]
     fn test_parse_2() {
-        let mut parser = Parser::new();
         assert_eq!(
-            parser.parse("(aaa ->bbb )"),
+            parse_ast("(aaa ->bbb )"),
             Ok(AST::Scope(Box::new(AST::Arrow(
                 Box::new(AST::Primitive("aaa".to_string())),
                 Box::new(AST::Primitive("bbb".to_string()))
@@ -243,18 +226,16 @@ mod tests {
 
     #[test]
     fn test_parse_3() {
-        let mut parser = Parser::new();
         assert_eq!(
-            parser.parse("{inst1 -> inst2 -> {inst4 <- inst3} -> inst5}"),
+            parse_ast("{inst1 -> inst2 -> {inst4 <- inst3} -> inst5}"),
             Err(())
         );
     }
 
     #[test]
     fn test_parse_4() {
-        let mut parser = Parser::new();
         assert_eq!(
-            parser.parse("inst1 -> inst2 -> (inst4 <- inst3) -> inst5"),
+            parse_ast("inst1 -> inst2 -> (inst4 <- inst3) -> inst5"),
             Ok(AST::Arrow(
                 Box::new(AST::Arrow(
                     Box::new(AST::Arrow(
@@ -273,18 +254,16 @@ mod tests {
 
     #[test]
     fn test_parse_5() {
-        let mut parser = Parser::new();
         assert_eq!(
-            parser.parse("{a=(P -> Q), b={c=(R -> {S <- T}), d={U <- V}}}"),
+            parse_ast("{a=(P -> Q), b={c=(R -> {S <- T}), d={U <- V}}}"),
             Err(())
         );
     }
 
     #[test]
     fn test_parse_6() {
-        let mut parser = Parser::new();
         assert_eq!(
-            parser.parse("(a -> b | c -> d)"),
+            parse_ast("(a -> b | c -> d)"),
             Ok(AST::Scope(Box::new(AST::Match(
                 Box::new(AST::Arrow(
                     Box::new(AST::Primitive("a".to_string())),
@@ -300,9 +279,8 @@ mod tests {
 
     #[test]
     fn test_parse_7() {
-        let mut parser = Parser::new();
         assert_eq!(
-            parser.parse("((P -> Q)<-(R -> S)).a"),
+            parse_ast("((P -> Q)<-(R -> S)).a"),
             Ok(AST::Method(
                 vec![AST::Scope(Box::new(AST::Arrow(
                     Box::new(AST::Scope(Box::new(AST::Arrow(
@@ -321,9 +299,8 @@ mod tests {
 
     #[test]
     fn test_parse_8() {
-        let mut parser = Parser::new();
         assert_eq!(
-            parser.parse(r#"("3".int -> push -> "2".int -> push -> add -> pop -> "i".write)"#),
+            parse_ast(r#"("3".int -> push -> "2".int -> push -> add -> pop -> "i".write)"#),
             Ok(AST::Scope(Box::new(AST::Arrow(
                 Box::new(AST::Arrow(
                     Box::new(AST::Arrow(
@@ -357,15 +334,13 @@ mod tests {
 
     #[test]
     fn test_parse_9() {
-        let mut parser = Parser::new();
-        assert_eq!(parser.parse("#"), Err(()));
+        assert_eq!(parse_ast("#"), Err(()));
     }
 
     #[test]
     fn test_interpreter_1() {
         let program = r#"("3" -> int) + "a".load -> "b".store -> "b".load"#;
-        let mut parser = Parser::new();
-        let ast = parser.parse(program).unwrap();
+        let ast = parse_ast(program).unwrap();
         let mut interpreter =
             Interpreter::new(HashMap::from([("a".to_string(), DataInterpreter::Int(5))]));
         assert_eq!(
@@ -398,8 +373,7 @@ mod tests {
     "i".load + ("1" -> int) -> "i".store
 ).loop | pass;
 "r".load"#;
-        let mut parser = Parser::new();
-        let ast = parser.parse(program).unwrap();
+        let ast = parse_ast(program).unwrap();
         let mut interpreter = Interpreter::new(HashMap::new());
         assert_eq!(
             interpreter.interpret(&[], &ast, DataInterpreter::Int(30)),
