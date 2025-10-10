@@ -129,6 +129,14 @@ impl Interpreter {
                 };
                 Some(DataInterpreter::Void())
             }
+            "input" => {
+                if stream != DataInterpreter::Void() {
+                    panic!()
+                }
+                let mut input = String::new();
+                std::io::stdin().read_line(&mut input).unwrap();
+                Some(DataInterpreter::Str(input.trim_end().to_string()))
+            }
             "store" => {
                 match self.interpret(&[], &args[0], DataInterpreter::Void()) {
                     Some(DataInterpreter::Str(label)) => self.storage.insert(label, stream),
