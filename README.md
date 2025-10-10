@@ -4,26 +4,17 @@ A small programming language
 ```
 $ cat program.hi
 (
-    "30" -> int -> "x".store;
-    "1" -> int -> "i".store;
+    "30" -> int -> \x;
+    "1" -> int -> \i;
     (
-        "i".load =< "x".load;
+        i =< x;
         (
-            "i".load % ("15" -> int) -> "t".store
-            -> "t".load == ("0" -> int)
-            -> "FizzBuzz" -> output
-        |
-            "i".load % ("3" -> int) -> "t".store
-            -> "t".load == ("0" -> int)
-            -> "Fizz" -> output
-        |
-            "i".load % ("5" -> int) -> "t".store
-            -> "t".load == ("0" -> int)
-            -> "Buzz" -> output
-        |
-            "i".load -> output
+            i % ("15" -> int) == ("0" -> int) -> "FizzBuzz" -> output
+            | i % ("3" -> int) == ("0" -> int) -> "Fizz" -> output
+            | i % ("5" -> int) == ("0" -> int) -> "Buzz" -> output
+            | i -> output
         );
-        "i".load + ("1" -> int) -> "i".store
+        i + ("1" -> int) -> i
     ).loop | pass
 )
 $ hilang program.hi
