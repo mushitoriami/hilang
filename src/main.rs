@@ -12,14 +12,15 @@ enum AST {
     Method(Vec<AST>, Box<AST>),
     Primitive(String),
     Literal(String),
+    Variable(String),
 }
 
 fn parse_ast(input: &str) -> Result<AST, ()> {
     let mut tokenizer = kohaku::Tokenizer::new([
-        ";", "|", "->", "<-", "=<", "==", "!=", "<", "+", "-", "*", "%", ".", "(", ")",
+        ";", "|", "->", "<-", "=<", "==", "!=", "<", "+", "-", "*", "%", "\\", ".", "(", ")",
     ]);
     let mut parser = suzuran::Parser::new([
-        ";", "|", "->", "<-", "=<", "==", "!=", "<", "+", "-", "*", "%", ".",
+        ";", "|", "->", "<-", "=<", "==", "!=", "<", "+", "-", "*", "%", "\\", ".",
     ]);
     let iter = tokenizer.tokenize(input).map_while(|x| x.ok());
     let node = parser.parse(iter).ok_or(())?;
@@ -34,6 +35,15 @@ fn convert(node: suzuran::Node) -> Result<AST, ()> {
             true => Ok(AST::Literal(label.trim_matches('"').to_string())),
             false => Ok(AST::Primitive(label)),
         },
+        suzuran::Node::Operator(label, n1, n2) if label == "\\" => {
+            if let suzuran::Node::Placeholder() = *n1
+                && let suzuran::Node::Primitive(label) = *n2
+            {
+                Ok(AST::Variable(label))
+            } else {
+                Err(())
+            }
+        }
         suzuran::Node::Operator(label, n1, n2) => {
             let a1 = convert(*n1)?;
             let a2 = convert(*n2)?;
@@ -50,12 +60,28 @@ fn convert(node: suzuran::Node) -> Result<AST, ()> {
 }
 
 struct Interpreter {
-    storage: HashMap<String, DataInterpreter>,
+    namespaces: Vec<HashMap<String, DataInterpreter>>,
 }
 
 impl Interpreter {
-    fn new(storage: HashMap<String, DataInterpreter>) -> Self {
-        Interpreter { storage }
+    fn new(global: HashMap<String, DataInterpreter>) -> Self {
+        Interpreter {
+            namespaces: vec![global],
+        }
+    }
+
+    fn set_variable(&mut self, label: &str, value: DataInterpreter) {
+        let iter_mut = self.namespaces.iter_mut().rev();
+        match iter_mut.filter(|x| x.contains_key(label)).next() {
+            Some(namespace) => namespace,
+            None => self.namespaces.last_mut().unwrap(),
+        }
+        .insert(label.to_string(), value);
+    }
+
+    fn get_variable(&self, label: &str) -> Option<DataInterpreter> {
+        let iter = self.namespaces.iter().rev();
+        return iter.filter_map(|x| x.get(label)).next().cloned();
     }
 
     fn interpret(
@@ -74,7 +100,20 @@ impl Interpreter {
             AST::Method(args, obj) => self.interpret(args, obj, stream),
             AST::Primitive(label) => self.interpret_primitive(args, label, stream),
             AST::Literal(contents) => self.interpret_literal(args, contents, stream),
-            AST::Scope(obj) => self.interpret(args, obj, stream),
+            AST::Scope(obj) => {
+                self.namespaces.push(HashMap::new());
+                let res = self.interpret(args, obj, stream);
+                self.namespaces.pop();
+                res
+            }
+            AST::Variable(label) => {
+                if self.get_variable(label).is_none() {
+                    self.set_variable(label, stream);
+                    Some(DataInterpreter::Void())
+                } else {
+                    panic!()
+                }
+            }
         }
     }
 
@@ -96,6 +135,14 @@ impl Interpreter {
         label: &str,
         stream: DataInterpreter,
     ) -> Option<DataInterpreter> {
+        if let Some(data) = self.get_variable(label) {
+            if stream == DataInterpreter::Void() {
+                return Some(data);
+            } else {
+                self.set_variable(label, stream);
+                return Some(DataInterpreter::Void());
+            }
+        }
         match label {
             "int" => match stream {
                 DataInterpreter::Int(i) => Some(DataInterpreter::Int(i)),
@@ -122,22 +169,6 @@ impl Interpreter {
                 let mut input = String::new();
                 std::io::stdin().read_line(&mut input).unwrap();
                 Some(DataInterpreter::Str(input.trim_end().to_string()))
-            }
-            "store" => {
-                match self.interpret(&[], &args[0], DataInterpreter::Void()) {
-                    Some(DataInterpreter::Str(label)) => self.storage.insert(label, stream),
-                    _ => panic!(),
-                };
-                Some(DataInterpreter::Void())
-            }
-            "load" => {
-                if stream != DataInterpreter::Void() {
-                    panic!()
-                }
-                match self.interpret(&[], &args[0], DataInterpreter::Void()) {
-                    Some(DataInterpreter::Str(label)) => self.storage.get(&label).cloned(),
-                    _ => panic!(),
-                }
             }
             "+" | "-" | "*" | "%" | "==" | "!=" | "=<" | "<" => {
                 let o1 = self.interpret(&[], &args[0], DataInterpreter::Void())?;
@@ -338,41 +369,38 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_10() {
+        assert_eq!(parse_ast(r#"\abc"#), Ok(AST::Variable("abc".to_string())));
+    }
+
+    #[test]
     fn test_interpreter_1() {
-        let program = r#"("3" -> int) + "a".load -> "b".store -> "b".load"#;
+        let program = r#"("3" -> int) + ("5" -> int) -> \b -> b"#;
         let ast = parse_ast(program).unwrap();
-        let mut interpreter =
-            Interpreter::new(HashMap::from([("a".to_string(), DataInterpreter::Int(5))]));
+        let mut interpreter = Interpreter::new(HashMap::from([]));
         assert_eq!(
             interpreter.interpret(&[], &ast, DataInterpreter::Void()),
             Some(DataInterpreter::Int(8))
-        );
-        assert_eq!(
-            interpreter.storage,
-            HashMap::from([
-                ("a".to_string(), DataInterpreter::Int(5)),
-                ("b".to_string(), DataInterpreter::Int(8))
-            ])
         );
     }
 
     #[test]
     fn test_interpreter_2() {
-        let program = r#""x".store;
-"1" -> int -> "i".store;
-"0" -> int -> "r".store;
+        let program = r#"\x;
+"1" -> int -> \i;
+"0" -> int -> \r;
 (
-    "i".load =< "x".load;
-    "2" -> int -> "j".store;
+    i =< x;
+    "2" -> int -> \j;
     (
-        "j".load < "i".load -> ("i".load % "j".load) != ("0" -> int);
-        "j".load + ("1" -> int) -> "j".store
+        j < i -> (i % j) != ("0" -> int);
+        j + ("1" -> int) -> j
     ).loop | pass;
-    "j".load == "i".load -> "r".load + "i".load -> "r".store
+    j == i -> r + i -> r
         | pass;
-    "i".load + ("1" -> int) -> "i".store
+    i + ("1" -> int) -> i
 ).loop | pass;
-"r".load"#;
+r"#;
         let ast = parse_ast(program).unwrap();
         let mut interpreter = Interpreter::new(HashMap::new());
         assert_eq!(
