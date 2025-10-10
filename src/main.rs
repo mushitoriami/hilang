@@ -157,22 +157,6 @@ impl Interpreter {
                 std::io::stdin().read_line(&mut input).unwrap();
                 Some(DataInterpreter::Str(input.trim_end().to_string()))
             }
-            "store" => {
-                match self.interpret(&[], &args[0], DataInterpreter::Void()) {
-                    Some(DataInterpreter::Str(label)) => self.set_variable(&label, stream),
-                    _ => panic!(),
-                };
-                Some(DataInterpreter::Void())
-            }
-            "load" => {
-                if stream != DataInterpreter::Void() {
-                    panic!()
-                }
-                match self.interpret(&[], &args[0], DataInterpreter::Void()) {
-                    Some(DataInterpreter::Str(label)) => self.get_variable(&label),
-                    _ => panic!(),
-                }
-            }
             "+" | "-" | "*" | "%" | "==" | "!=" | "=<" | "<" => {
                 let o1 = self.interpret(&[], &args[0], DataInterpreter::Void())?;
                 let o2 = self.interpret(&[], &args[1], DataInterpreter::Void())?;
