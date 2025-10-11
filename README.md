@@ -3,20 +3,17 @@ A small programming language
 
 ```
 $ cat program.hi
+"30" -> int -> \x;
+"1" -> int -> \i;
 (
-    "30" -> int -> \x;
-    "1" -> int -> \i;
-    (
-        i =< x;
-        (
-            i % ("15" -> int) == ("0" -> int) -> "FizzBuzz" -> output
-            | i % ("3" -> int) == ("0" -> int) -> "Fizz" -> output
-            | i % ("5" -> int) == ("0" -> int) -> "Buzz" -> output
-            | i -> output
-        );
-        i + ("1" -> int) -> i
-    ).loop | pass
-)
+    i =< x -> (
+        i % ("15" -> int) == ("0" -> int) -> "FizzBuzz"
+        | i % ("3" -> int) == ("0" -> int) -> "Fizz"
+        | i % ("5" -> int) == ("0" -> int) -> "Buzz"
+        | i
+    ) -> output;
+    i + ("1" -> int) -> i
+).loop | pass
 $ hilang program.hi
 1
 2
