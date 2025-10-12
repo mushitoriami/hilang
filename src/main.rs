@@ -27,37 +27,40 @@ impl FromStr for AST {
         ]);
         let iter = tokenizer.tokenize(s).map_while(|x| x.ok());
         let node = parser.parse(iter).ok_or(())?;
-        convert(node)
+        Self::try_from(node)
     }
 }
 
-fn convert(node: suzuran::Node) -> Result<AST, ()> {
-    match node {
-        suzuran::Node::Placeholder() => Err(()),
-        suzuran::Node::Parentheses(n) => Ok(AST::Scope(Box::new(convert(*n)?))),
-        suzuran::Node::Primitive(label) => match label.starts_with(r#"""#) {
-            true => Ok(AST::Literal(label.trim_matches('"').to_string())),
-            false => Ok(AST::Primitive(label)),
-        },
-        suzuran::Node::Operator(label, n1, n2) if label == "\\" => {
-            if let suzuran::Node::Placeholder() = *n1
-                && let suzuran::Node::Primitive(label) = *n2
-            {
-                Ok(AST::Variable(label))
-            } else {
-                Err(())
+impl TryFrom<suzuran::Node> for AST {
+    type Error = ();
+    fn try_from(node: suzuran::Node) -> Result<Self, Self::Error> {
+        match node {
+            suzuran::Node::Placeholder() => Err(()),
+            suzuran::Node::Parentheses(n) => Ok(AST::Scope(Box::new(Self::try_from(*n)?))),
+            suzuran::Node::Primitive(label) => match label.starts_with(r#"""#) {
+                true => Ok(AST::Literal(label.trim_matches('"').to_string())),
+                false => Ok(AST::Primitive(label)),
+            },
+            suzuran::Node::Operator(label, n1, n2) if label == "\\" => {
+                if let suzuran::Node::Placeholder() = *n1
+                    && let suzuran::Node::Primitive(label) = *n2
+                {
+                    Ok(AST::Variable(label))
+                } else {
+                    Err(())
+                }
             }
-        }
-        suzuran::Node::Operator(label, n1, n2) => {
-            let a1 = convert(*n1)?;
-            let a2 = convert(*n2)?;
-            match label.as_str() {
-                ";" => Ok(AST::Arrow(Box::new(a1), Box::new(a2))),
-                "->" => Ok(AST::Arrow(Box::new(a1), Box::new(a2))),
-                "<-" => Ok(AST::Arrow(Box::new(a2), Box::new(a1))),
-                "|" => Ok(AST::Match(Box::new(a1), Box::new(a2))),
-                "." => Ok(AST::Method(vec![a1], Box::new(a2))),
-                _ => Ok(AST::Method(vec![a1, a2], Box::new(AST::Primitive(label)))),
+            suzuran::Node::Operator(label, n1, n2) => {
+                let a1 = Self::try_from(*n1)?;
+                let a2 = Self::try_from(*n2)?;
+                match label.as_str() {
+                    ";" => Ok(AST::Arrow(Box::new(a1), Box::new(a2))),
+                    "->" => Ok(AST::Arrow(Box::new(a1), Box::new(a2))),
+                    "<-" => Ok(AST::Arrow(Box::new(a2), Box::new(a1))),
+                    "|" => Ok(AST::Match(Box::new(a1), Box::new(a2))),
+                    "." => Ok(AST::Method(vec![a1], Box::new(a2))),
+                    _ => Ok(AST::Method(vec![a1, a2], Box::new(AST::Primitive(label)))),
+                }
             }
         }
     }
