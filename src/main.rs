@@ -1,3 +1,4 @@
+use kohaku::Tokenizer;
 use std::collections::HashMap;
 use std::env;
 use std::fs::File;
@@ -19,13 +20,13 @@ enum AST {
 impl FromStr for AST {
     type Err = ();
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut tokenizer = kohaku::Tokenizer::new([
+        let keywords = [
             ";", "|", "->", "<-", "=<", "==", "!=", "<", "+", "-", "*", "%", "\\", ".", "(", ")",
-        ]);
+        ];
         let mut parser = suzuran::Parser::new([
             ";", "|", "->", "<-", "=<", "==", "!=", "<", "+", "-", "*", "%", "\\", ".",
         ]);
-        let iter = tokenizer.tokenize(s).map_while(|x| x.ok());
+        let iter = s.tokenize(keywords).map_while(|x| x.ok());
         let node = parser.parse(iter).ok_or(())?;
         Self::try_from(node)
     }
