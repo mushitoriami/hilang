@@ -2,7 +2,7 @@
 name = "hilang"
 version = "0.2.2"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 description = "A small programming language"
 license = "MIT"
 readme = "README.md"
