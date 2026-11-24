@@ -7,17 +7,17 @@ use std::process;
 use std::str::FromStr;
 
 #[derive(Debug, PartialEq)]
-enum AST {
-    Scope(Box<AST>),
-    Arrow(Box<AST>, Box<AST>),
-    Match(Box<AST>, Box<AST>),
-    Method(Vec<AST>, Box<AST>),
+enum Ast {
+    Scope(Box<Ast>),
+    Arrow(Box<Ast>, Box<Ast>),
+    Match(Box<Ast>, Box<Ast>),
+    Method(Vec<Ast>, Box<Ast>),
     Primitive(String),
     Literal(String),
     Variable(String),
 }
 
-impl FromStr for AST {
+impl FromStr for Ast {
     type Err = ();
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let keywords = [
@@ -32,21 +32,21 @@ impl FromStr for AST {
     }
 }
 
-impl TryFrom<suzuran::Node> for AST {
+impl TryFrom<suzuran::Node> for Ast {
     type Error = ();
     fn try_from(node: suzuran::Node) -> Result<Self, Self::Error> {
         match node {
             suzuran::Node::Placeholder() => Err(()),
-            suzuran::Node::Parentheses(n) => Ok(AST::Scope(Box::new(Self::try_from(*n)?))),
+            suzuran::Node::Parentheses(n) => Ok(Ast::Scope(Box::new(Self::try_from(*n)?))),
             suzuran::Node::Primitive(label) => match label.starts_with(r#"""#) {
-                true => Ok(AST::Literal(label.trim_matches('"').to_string())),
-                false => Ok(AST::Primitive(label)),
+                true => Ok(Ast::Literal(label.trim_matches('"').to_string())),
+                false => Ok(Ast::Primitive(label)),
             },
             suzuran::Node::Operator(label, n1, n2) if label == "\\" => {
                 if let suzuran::Node::Placeholder() = *n1
                     && let suzuran::Node::Primitive(label) = *n2
                 {
-                    Ok(AST::Variable(label))
+                    Ok(Ast::Variable(label))
                 } else {
                     Err(())
                 }
@@ -55,12 +55,12 @@ impl TryFrom<suzuran::Node> for AST {
                 let a1 = Self::try_from(*n1)?;
                 let a2 = Self::try_from(*n2)?;
                 match label.as_str() {
-                    ";" => Ok(AST::Arrow(Box::new(a1), Box::new(a2))),
-                    "->" => Ok(AST::Arrow(Box::new(a1), Box::new(a2))),
-                    "<-" => Ok(AST::Arrow(Box::new(a2), Box::new(a1))),
-                    "|" => Ok(AST::Match(Box::new(a1), Box::new(a2))),
-                    "." => Ok(AST::Method(vec![a1], Box::new(a2))),
-                    _ => Ok(AST::Method(vec![a1, a2], Box::new(AST::Primitive(label)))),
+                    ";" => Ok(Ast::Arrow(Box::new(a1), Box::new(a2))),
+                    "->" => Ok(Ast::Arrow(Box::new(a1), Box::new(a2))),
+                    "<-" => Ok(Ast::Arrow(Box::new(a2), Box::new(a1))),
+                    "|" => Ok(Ast::Match(Box::new(a1), Box::new(a2))),
+                    "." => Ok(Ast::Method(vec![a1], Box::new(a2))),
+                    _ => Ok(Ast::Method(vec![a1, a2], Box::new(Ast::Primitive(label)))),
                 }
             }
         }
@@ -79,8 +79,12 @@ impl Interpreter {
     }
 
     fn set_variable(&mut self, label: &str, value: DataInterpreter) {
-        let iter_mut = self.namespaces.iter_mut().rev();
-        match iter_mut.filter(|x| x.contains_key(label)).next() {
+        match self
+            .namespaces
+            .iter_mut()
+            .rev()
+            .find(|x| x.contains_key(label))
+        {
             Some(namespace) => namespace,
             None => self.namespaces.last_mut().unwrap(),
         }
@@ -89,32 +93,32 @@ impl Interpreter {
 
     fn get_variable(&self, label: &str) -> Option<DataInterpreter> {
         let iter = self.namespaces.iter().rev();
-        return iter.filter_map(|x| x.get(label)).next().cloned();
+        iter.filter_map(|x| x.get(label)).next().cloned()
     }
 
     fn interpret(
         &mut self,
-        args: &[AST],
-        ast: &AST,
+        args: &[Ast],
+        ast: &Ast,
         stream: DataInterpreter,
     ) -> Option<DataInterpreter> {
         match ast {
-            AST::Arrow(obj1, obj2) => self
+            Ast::Arrow(obj1, obj2) => self
                 .interpret(args, obj1, stream)
                 .and_then(|stream| self.interpret(args, obj2, stream)),
-            AST::Match(obj1, obj2) => self
+            Ast::Match(obj1, obj2) => self
                 .interpret(args, obj1, stream.clone())
                 .or_else(|| self.interpret(args, obj2, stream)),
-            AST::Method(args, obj) => self.interpret(args, obj, stream),
-            AST::Primitive(label) => self.interpret_primitive(args, label, stream),
-            AST::Literal(contents) => self.interpret_literal(args, contents, stream),
-            AST::Scope(obj) => {
+            Ast::Method(args, obj) => self.interpret(args, obj, stream),
+            Ast::Primitive(label) => self.interpret_primitive(args, label, stream),
+            Ast::Literal(contents) => self.interpret_literal(args, contents, stream),
+            Ast::Scope(obj) => {
                 self.namespaces.push(HashMap::new());
                 let res = self.interpret(args, obj, stream);
                 self.namespaces.pop();
                 res
             }
-            AST::Variable(label) => {
+            Ast::Variable(label) => {
                 if self.get_variable(label).is_none() {
                     self.set_variable(label, stream);
                     Some(DataInterpreter::Void())
@@ -127,7 +131,7 @@ impl Interpreter {
 
     fn interpret_literal(
         &mut self,
-        args: &[AST],
+        args: &[Ast],
         contents: &str,
         stream: DataInterpreter,
     ) -> Option<DataInterpreter> {
@@ -139,7 +143,7 @@ impl Interpreter {
 
     fn interpret_primitive(
         &mut self,
-        args: &[AST],
+        args: &[Ast],
         label: &str,
         stream: DataInterpreter,
     ) -> Option<DataInterpreter> {
@@ -223,22 +227,22 @@ fn main() {
         process::exit(1);
     }
     let Ok(mut file) = File::open(&args[1]) else {
-        eprintln!("Cannot open file: {}", &args[1]);
+        eprintln!("Cannot open file: {}", args[1]);
         process::exit(1);
     };
     let mut contents = String::new();
     let Ok(_) = file.read_to_string(&mut contents) else {
-        eprintln!("Cannot read file: {}", &args[1]);
+        eprintln!("Cannot read file: {}", args[1]);
         process::exit(1);
     };
     let Ok(ast) = contents.parse() else {
-        eprintln!("Cannot parse file: {}", &args[1]);
+        eprintln!("Cannot parse file: {}", args[1]);
         process::exit(1);
     };
     let mut interpreter = Interpreter::new(HashMap::new());
     let Some(DataInterpreter::Void()) = interpreter.interpret(&[], &ast, DataInterpreter::Void())
     else {
-        eprintln!("Cannot execute successfully: {}", &args[1]);
+        eprintln!("Cannot execute successfully: {}", args[1]);
         process::exit(1);
     };
 }
@@ -249,16 +253,16 @@ mod tests {
 
     #[test]
     fn test_parse_1() {
-        assert_eq!("{aaa ->bbb }".parse::<AST>(), Err(()));
+        assert_eq!("{aaa ->bbb }".parse::<Ast>(), Err(()));
     }
 
     #[test]
     fn test_parse_2() {
         assert_eq!(
-            "(aaa ->bbb )".parse::<AST>(),
-            Ok(AST::Scope(Box::new(AST::Arrow(
-                Box::new(AST::Primitive("aaa".to_string())),
-                Box::new(AST::Primitive("bbb".to_string()))
+            "(aaa ->bbb )".parse::<Ast>(),
+            Ok(Ast::Scope(Box::new(Ast::Arrow(
+                Box::new(Ast::Primitive("aaa".to_string())),
+                Box::new(Ast::Primitive("bbb".to_string()))
             ))))
         );
     }
@@ -266,7 +270,7 @@ mod tests {
     #[test]
     fn test_parse_3() {
         assert_eq!(
-            "{inst1 -> inst2 -> {inst4 <- inst3} -> inst5}".parse::<AST>(),
+            "{inst1 -> inst2 -> {inst4 <- inst3} -> inst5}".parse::<Ast>(),
             Err(())
         );
     }
@@ -274,19 +278,19 @@ mod tests {
     #[test]
     fn test_parse_4() {
         assert_eq!(
-            "inst1 -> inst2 -> (inst4 <- inst3) -> inst5".parse::<AST>(),
-            Ok(AST::Arrow(
-                Box::new(AST::Arrow(
-                    Box::new(AST::Arrow(
-                        Box::new(AST::Primitive("inst1".to_string())),
-                        Box::new(AST::Primitive("inst2".to_string()))
+            "inst1 -> inst2 -> (inst4 <- inst3) -> inst5".parse::<Ast>(),
+            Ok(Ast::Arrow(
+                Box::new(Ast::Arrow(
+                    Box::new(Ast::Arrow(
+                        Box::new(Ast::Primitive("inst1".to_string())),
+                        Box::new(Ast::Primitive("inst2".to_string()))
                     )),
-                    Box::new(AST::Scope(Box::new(AST::Arrow(
-                        Box::new(AST::Primitive("inst3".to_string())),
-                        Box::new(AST::Primitive("inst4".to_string()))
+                    Box::new(Ast::Scope(Box::new(Ast::Arrow(
+                        Box::new(Ast::Primitive("inst3".to_string())),
+                        Box::new(Ast::Primitive("inst4".to_string()))
                     ))))
                 )),
-                Box::new(AST::Primitive("inst5".to_string()))
+                Box::new(Ast::Primitive("inst5".to_string()))
             ))
         );
     }
@@ -294,7 +298,7 @@ mod tests {
     #[test]
     fn test_parse_5() {
         assert_eq!(
-            "{a=(P -> Q), b={c=(R -> {S <- T}), d={U <- V}}}".parse::<AST>(),
+            "{a=(P -> Q), b={c=(R -> {S <- T}), d={U <- V}}}".parse::<Ast>(),
             Err(())
         );
     }
@@ -302,15 +306,15 @@ mod tests {
     #[test]
     fn test_parse_6() {
         assert_eq!(
-            "(a -> b | c -> d)".parse::<AST>(),
-            Ok(AST::Scope(Box::new(AST::Match(
-                Box::new(AST::Arrow(
-                    Box::new(AST::Primitive("a".to_string())),
-                    Box::new(AST::Primitive("b".to_string()))
+            "(a -> b | c -> d)".parse::<Ast>(),
+            Ok(Ast::Scope(Box::new(Ast::Match(
+                Box::new(Ast::Arrow(
+                    Box::new(Ast::Primitive("a".to_string())),
+                    Box::new(Ast::Primitive("b".to_string()))
                 )),
-                Box::new(AST::Arrow(
-                    Box::new(AST::Primitive("c".to_string())),
-                    Box::new(AST::Primitive("d".to_string()))
+                Box::new(Ast::Arrow(
+                    Box::new(Ast::Primitive("c".to_string())),
+                    Box::new(Ast::Primitive("d".to_string()))
                 ))
             ))))
         );
@@ -319,19 +323,19 @@ mod tests {
     #[test]
     fn test_parse_7() {
         assert_eq!(
-            "((P -> Q)<-(R -> S)).a".parse::<AST>(),
-            Ok(AST::Method(
-                vec![AST::Scope(Box::new(AST::Arrow(
-                    Box::new(AST::Scope(Box::new(AST::Arrow(
-                        Box::new(AST::Primitive("R".to_string())),
-                        Box::new(AST::Primitive("S".to_string()))
+            "((P -> Q)<-(R -> S)).a".parse::<Ast>(),
+            Ok(Ast::Method(
+                vec![Ast::Scope(Box::new(Ast::Arrow(
+                    Box::new(Ast::Scope(Box::new(Ast::Arrow(
+                        Box::new(Ast::Primitive("R".to_string())),
+                        Box::new(Ast::Primitive("S".to_string()))
                     )))),
-                    Box::new(AST::Scope(Box::new(AST::Arrow(
-                        Box::new(AST::Primitive("P".to_string())),
-                        Box::new(AST::Primitive("Q".to_string()))
+                    Box::new(Ast::Scope(Box::new(Ast::Arrow(
+                        Box::new(Ast::Primitive("P".to_string())),
+                        Box::new(Ast::Primitive("Q".to_string()))
                     ))))
                 )))],
-                Box::new(AST::Primitive("a".to_string()))
+                Box::new(Ast::Primitive("a".to_string()))
             ))
         );
     }
@@ -339,33 +343,33 @@ mod tests {
     #[test]
     fn test_parse_8() {
         assert_eq!(
-            r#"("3".int -> push -> "2".int -> push -> add -> pop -> "i".write)"#.parse::<AST>(),
-            Ok(AST::Scope(Box::new(AST::Arrow(
-                Box::new(AST::Arrow(
-                    Box::new(AST::Arrow(
-                        Box::new(AST::Arrow(
-                            Box::new(AST::Arrow(
-                                Box::new(AST::Arrow(
-                                    Box::new(AST::Method(
-                                        vec![AST::Literal("3".to_string())],
-                                        Box::new(AST::Primitive("int".to_string()))
+            r#"("3".int -> push -> "2".int -> push -> add -> pop -> "i".write)"#.parse::<Ast>(),
+            Ok(Ast::Scope(Box::new(Ast::Arrow(
+                Box::new(Ast::Arrow(
+                    Box::new(Ast::Arrow(
+                        Box::new(Ast::Arrow(
+                            Box::new(Ast::Arrow(
+                                Box::new(Ast::Arrow(
+                                    Box::new(Ast::Method(
+                                        vec![Ast::Literal("3".to_string())],
+                                        Box::new(Ast::Primitive("int".to_string()))
                                     )),
-                                    Box::new(AST::Primitive("push".to_string()))
+                                    Box::new(Ast::Primitive("push".to_string()))
                                 )),
-                                Box::new(AST::Method(
-                                    vec![AST::Literal("2".to_string())],
-                                    Box::new(AST::Primitive("int".to_string()))
+                                Box::new(Ast::Method(
+                                    vec![Ast::Literal("2".to_string())],
+                                    Box::new(Ast::Primitive("int".to_string()))
                                 ))
                             )),
-                            Box::new(AST::Primitive("push".to_string()))
+                            Box::new(Ast::Primitive("push".to_string()))
                         )),
-                        Box::new(AST::Primitive("add".to_string()))
+                        Box::new(Ast::Primitive("add".to_string()))
                     )),
-                    Box::new(AST::Primitive("pop".to_string()))
+                    Box::new(Ast::Primitive("pop".to_string()))
                 )),
-                Box::new(AST::Method(
-                    vec![AST::Literal("i".to_string())],
-                    Box::new(AST::Primitive("write".to_string()))
+                Box::new(Ast::Method(
+                    vec![Ast::Literal("i".to_string())],
+                    Box::new(Ast::Primitive("write".to_string()))
                 ))
             ))))
         );
@@ -373,21 +377,21 @@ mod tests {
 
     #[test]
     fn test_parse_9() {
-        assert_eq!("#".parse::<AST>(), Err(()));
+        assert_eq!("#".parse::<Ast>(), Err(()));
     }
 
     #[test]
     fn test_parse_10() {
         assert_eq!(
-            r#"\abc"#.parse::<AST>(),
-            Ok(AST::Variable("abc".to_string()))
+            r#"\abc"#.parse::<Ast>(),
+            Ok(Ast::Variable("abc".to_string()))
         );
     }
 
     #[test]
     fn test_interpreter_1() {
         let program = r#"("3" -> int) + ("5" -> int) -> \b -> b"#;
-        let ast = program.parse::<AST>().unwrap();
+        let ast = program.parse::<Ast>().unwrap();
         let mut interpreter = Interpreter::new(HashMap::from([]));
         assert_eq!(
             interpreter.interpret(&[], &ast, DataInterpreter::Void()),
@@ -412,7 +416,7 @@ mod tests {
     i + ("1" -> int) -> i
 ).loop | pass;
 r"#;
-        let ast = program.parse::<AST>().unwrap();
+        let ast = program.parse::<Ast>().unwrap();
         let mut interpreter = Interpreter::new(HashMap::new());
         assert_eq!(
             interpreter.interpret(&[], &ast, DataInterpreter::Int(30)),
